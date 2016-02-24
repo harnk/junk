@@ -188,7 +188,7 @@ class APNS_Push
 	{
 		if (strlen($deviceToken) != 64)
 		{
-			writeToLog("Message $messageId is probably an Android device - deal with it differently");
+			writeToLog("Message $messageId is probably an Android device - deal with it differently now");
 			return TRUE;
 		}
 
