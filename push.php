@@ -189,7 +189,7 @@ class APNS_Push
 		if (strlen($deviceToken) != 64)
 		{
 			writeToLog("Message $messageId is probably an Android device - deal with it differently now");
-			$data = array( 'extra' => 'whereru', 'asker' => '8BF13A775C1844669F678DBB36F6D73D', 'loc' => '40.737009, -114.043929' );
+			$data = array( 'extra' => 'whereru', 'asker' => '591f30dad40f37039c3593c738c47cb9', 'loc' => '40.737009, -114.043929' );
 			$ids = array( 'e4a_CgCVXa0:APA91bFSdqfdchWM8rYRKGhqF__1X_TSTzTISZEzfe2gNVOrdC46lRW_cHAaarNk4AsKUYfq8vgWHUJilE5jEmkyz8ukQ0MVfMcn9hwXbY8oZ8q9RvSqSnzgXFN28yOQ9NtB2nRN79in');
 			$this->sendGoogleCloudMessage( $data, $ids);
 			writeToLog("did sendGoogleCloudMessage work");
