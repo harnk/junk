@@ -192,10 +192,10 @@ class APNS_Push
 			$jsonString = $payload;
 			$obj = json_decode($jsonString);
 //			echo $obj->alert;
-			if (strcmp($obj->aps->extra, 'whereru') == 0) {
-				$data = array( 'extra' => 'x', 'payload' => $payload, 'message' => 'Where R U', 'asker' => 'x', 'loc' => 'x' );
+			if (strcmp($obj->aps->extra, "whereru") == 0) {
+				$data = array( 'payload' => $payload, 'message' => 'Where R U' );
 			} else {
-				$data = array( 'extra' => 'y', 'payload' => $payload, 'message' => $obj->aps->alert, 'asker' => 'y', 'loc' => 'y' );
+				$data = array( 'payload' => $payload, 'message' => $obj->aps->alert );
 			}
 			// $data = array( 'payload' => $payload, 'message' => 'WhereRU New Message');
 			// $ids = array( 'eUvHaYUHq1M:APA91bElViVWfJvhOE3qs5g9TX83ViI8nCct00dx8-Q-QhJTgU1aZSsq4zotAiEW425LLubdYkgzN9lfxr6Eacrd96z2oAZVTlgSJXP4AcALPuW06m_ps9ohB2EMTDUPviIsVCBg_e5z');
