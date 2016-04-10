@@ -188,14 +188,17 @@ class APNS_Push
 	{
 		if (strlen($deviceToken) != 64)
 		{
-			writeToLog("Message $messageId is probably an Android device - deal with it differently now");
 			$jsonString = $payload;
 			$obj = json_decode($jsonString);
+			// write to push_development.log in same folder as this php file
+			writeToLog("Message $messageId is for an Android device - $obj->extra");
 //			echo $obj->alert;
-			if (strcmp($obj->aps->extra, "whereru") == 0) {
-				$data = array( 'payload' => $payload, 'message' => 'Where R U' );
+			if (strcmp($obj->extra, "whereru") == 0) {
+				$data = array( 'payload' => $payload, 'message' => 'wru' );
+				writeToLog("sending message wru and payload - $payload");
 			} else {
 				$data = array( 'payload' => $payload, 'message' => $obj->aps->alert );
+				writeToLog("sending message $obj->alert and payload - $payload");
 			}
 			// $data = array( 'payload' => $payload, 'message' => 'WhereRU New Message');
 			// $ids = array( 'eUvHaYUHq1M:APA91bElViVWfJvhOE3qs5g9TX83ViI8nCct00dx8-Q-QhJTgU1aZSsq4zotAiEW425LLubdYkgzN9lfxr6Eacrd96z2oAZVTlgSJXP4AcALPuW06m_ps9ohB2EMTDUPviIsVCBg_e5z');
