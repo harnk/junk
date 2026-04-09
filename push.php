@@ -74,6 +74,7 @@ class APNS_Push
 	private $keyId;
 	private $teamId;
 	private $bundleId;
+	private $pdo;
 	private $jwt;
 	private $jwtIssuedAt = 0;
 
