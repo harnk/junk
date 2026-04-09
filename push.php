@@ -1,5 +1,9 @@
 <?php
 
+// WARNING 
+// MAR 2026 -- This whole thing is obsolete and must be replaced with a new push notification system that can handle both iOS and Android devices. The current system is based on an old tutorial and only supports iOS devices. It also uses the old binary interface to APNS, which is no longer recommended by Apple. We need to switch to the new HTTP/2 API for APNS and also implement support for Firebase Cloud Messaging (FCM) for Android devices. This will require a significant rewrite of the code, but it will be worth it in the long run to have a more modern and robust push notification system.
+
+
 // This script should be run as a background process on the server. It checks
 // every few seconds for new messages in the database table push_queue and 
 // sends them to the Apple Push Notification Service.
@@ -65,16 +69,38 @@ function fatalError($message)
 
 class APNS_Push
 {
-	private $fp = NULL;
-	private $server;
-	private $certificate;
-	private $passphrase;
+	private $url;
+	private $authKey;
+	private $keyId;
+	private $teamId;
+	private $bundleId;
+	private $jwt;
+	private $jwtIssuedAt = 0;
 
 	function __construct($config)
 	{
-		$this->server = $config['server'];
-		$this->certificate = $config['certificate'];
-		$this->passphrase = $config['passphrase'];
+		// APNS HTTP/2 settings read from the configuration file.
+		$this->url = rtrim($config['url'], '/');
+		$this->authKey = $config['authKey'];
+		$this->keyId = $config['keyId'];
+		$this->teamId = $config['teamId'];
+		$this->bundleId = $config['bundleId'];
+
+		if (!file_exists($this->authKey))
+			exit('APNS auth key not found: ' . $this->authKey . PHP_EOL);
+
+		// Create JWT for APNS authentication
+		$header = ['alg' => 'ES256', 'kid' => $this->keyId];
+		$claims = ['iss' => $this->teamId, 'iat' => time()];
+
+		function base64url($data) {
+		    return rtrim(strtr(base64_encode(json_encode($data)), '+/', '-_'), '=');
+		}
+
+		$this->jwt = base64url($header) . '.' . base64url($claims);
+
+		openssl_sign($this->jwt, $signature, file_get_contents($this->authKey), 'sha256');
+		$this->jwt .= '.' . rtrim(strtr(base64_encode($signature), '+/', '-_'), '=');
 
 		// Create a connection to the database.
 		$this->pdo = new PDO(
@@ -96,7 +122,7 @@ class APNS_Push
 	// forever (or until a fatal error occurs and the script exits).
 	function start()
 	{
-		writeToLog('Connecting to ' . $this->server);
+		writeToLog('Initializing APNS HTTP/2 client');
 
 		if (!$this->connectToAPNS())
 			exit;
@@ -134,52 +160,142 @@ class APNS_Push
 	// Returns TRUE on success, FALSE on failure.
 	function connectToAPNS()
 	{
-		$ctx = stream_context_create();
-		stream_context_set_option($ctx, 'ssl', 'local_cert', $this->certificate);
-		stream_context_set_option($ctx, 'ssl', 'cafile', 'entrust_2048_ca.cer');
-		stream_context_set_option($ctx, 'ssl', 'passphrase', $this->passphrase);
-
-		$this->fp = stream_socket_client(
-			'ssl://' . $this->server, $err, $errstr, 60,
-			STREAM_CLIENT_CONNECT|STREAM_CLIENT_PERSISTENT, $ctx);
-
-		if (!$this->fp)
-		{
-			writeToLog("Failed to connect: $err $errstr");
+		if (!function_exists('curl_init')) {
+			writeToLog('cURL extension is required for APNS HTTP/2');
 			return FALSE;
 		}
 
-		writeToLog('Connection OK');
+		$curlVersion = curl_version();
+		if (defined('CURL_VERSION_HTTP2') && !($curlVersion['features'] & CURL_VERSION_HTTP2)) {
+			writeToLog('cURL must be built with HTTP/2 support for APNS');
+			return FALSE;
+		}
+
+		try {
+			$this->getApnsJwt();
+		} catch (Exception $e) {
+			writeToLog('APNS JWT generation failed: ' . $e->getMessage());
+			return FALSE;
+		}
+
+		writeToLog('APNS HTTP/2 initialized');
 		return TRUE;
 	}
 
 	// Drops the connection to the APNS server.
 	function disconnectFromAPNS()
 	{
-		fclose($this->fp);
-		$this->fp = NULL;
+		// No persistent APNS connection is maintained in HTTP/2 mode.
 	}
 
 	// Attempts to reconnect to Apple's Push Notification Service. Exits with
 	// an error if the connection cannot be re-established after 3 attempts.
 	function reconnectToAPNS()
 	{
-		$this->disconnectFromAPNS();
-	
 		$attempt = 1;
-	
+
 		while (true)
 		{
-			writeToLog('Reconnecting to ' . $this->server . ", attempt $attempt");
+			writeToLog('Reinitializing APNS HTTP/2 client, attempt ' . $attempt);
 
 			if ($this->connectToAPNS())
 				return;
 
 			if ($attempt++ > 3)
-				fatalError('Could not reconnect after 3 attempts');
+				fatalError('Could not reinitialize APNS HTTP/2 client after 3 attempts');
 
 			sleep(60);
 		}
+	}
+
+	private function base64UrlEncode($data)
+	{
+		return rtrim(strtr(base64_encode($data), '+/', '-_'), '=');
+	}
+
+	private function getApnsJwt()
+	{
+		if ($this->jwt && (time() - $this->jwtIssuedAt) < 3000)
+			return $this->jwt;
+
+		$header = ['alg' => 'ES256', 'kid' => $this->keyId];
+		$claims = ['iss' => $this->teamId, 'iat' => time()];
+
+		$data = $this->base64UrlEncode(json_encode($header)) . '.' . $this->base64UrlEncode(json_encode($claims));
+
+		$privateKey = file_get_contents($this->authKey);
+		$pkResource = openssl_pkey_get_private($privateKey);
+		if (!$pkResource)
+			throw new Exception('Unable to load APNS auth key');
+
+		if (!openssl_sign($data, $signature, $pkResource, OPENSSL_ALGO_SHA256))
+			throw new Exception('Unable to sign APNS JWT');
+
+		$this->jwt = $data . '.' . $this->base64UrlEncode($signature);
+		$this->jwtIssuedAt = time();
+
+		return $this->jwt;
+	}
+
+	private function normalizeApnsPayload($messageId, $payload)
+	{
+		$json = json_decode($payload, true);
+		if (!is_array($json))
+		{
+			writeToLog("Message $messageId has invalid payload");
+			return false;
+		}
+
+		if (!isset($json['aps']))
+		{
+			if (isset($json['alert']) || isset($json['sound']) || isset($json['badge']))
+				$json = ['aps' => $json];
+			else
+				$json = ['aps' => ['alert' => $json]];
+		}
+
+		return json_encode($json, JSON_UNESCAPED_UNICODE);
+	}
+
+	private function sendApnsRequest($messageId, $deviceToken, $payloadJson)
+	{
+		$jwt = $this->getApnsJwt();
+		$url = $this->url . '/' . $deviceToken;
+
+		$headers = [
+			'apns-topic: ' . $this->bundleId,
+			'apns-push-type: alert',
+			'apns-priority: 10',
+			'authorization: bearer ' . $jwt,
+			'content-type: application/json',
+		];
+
+		$ch = curl_init($url);
+		curl_setopt($ch, CURLOPT_POST, true);
+		curl_setopt($ch, CURLOPT_POSTFIELDS, $payloadJson);
+		curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($ch, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_2_0);
+		curl_setopt($ch, CURLOPT_TIMEOUT, 60);
+
+		$response = curl_exec($ch);
+		$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+		$curlErr = curl_errno($ch) ? curl_error($ch) : null;
+
+		if ($curlErr)
+		{
+			writeToLog("APNS curl error for message $messageId: $curlErr");
+			return false;
+		}
+
+		if ($httpCode === 200)
+		{
+			writeToLog("Message $messageId successfully delivered to APNS");
+			return true;
+		}
+
+		writeToLog("APNS error for message $messageId: HTTP $httpCode response: $response");
+		return false;
 	}
 
 	// Sends a notification to the APNS server. Returns FALSE if the connection
@@ -192,7 +308,7 @@ class APNS_Push
 			$obj = json_decode($jsonString);
 			// write to push_development.log in same folder as this php file
 			writeToLog("Message $messageId is for an Android device - $obj->extra");
-//			echo $obj->alert;
+			//			echo $obj->alert;
 			if (strcmp($obj->extra, "whereru") == 0) {
 				$data = array( 'payload' => $payload, 'message' => 'wru' );
 				writeToLog("sending message wru and payload - $payload");
@@ -209,48 +325,12 @@ class APNS_Push
 			return TRUE;
 		}
 
-		if (strlen($payload) < 10)
-		{
-			writeToLog("Message $messageId has invalid payload");
+		$payloadJson = $this->normalizeApnsPayload($messageId, $payload);
+		if ($payloadJson === false)
 			return TRUE;
-		}
 
-		writeToLog("Sending message $messageId to '$deviceToken', payload: '$payload'");
-
-		if (!$this->fp)
-		{
-			writeToLog('No connection to APNS');
-			return FALSE;
-		}
-
-		// The simple format
-		$msg = chr(0)                       // command (1 byte)
-		     . pack('n', 32)                // token length (2 bytes)
-		     . pack('H*', $deviceToken)     // device token (32 bytes)
-		     . pack('n', strlen($payload))  // payload length (2 bytes)
-		     . $payload;                    // the JSON payload
-
-		/*
-		// The enhanced notification format
-		$msg = chr(1)                       // command (1 byte)
-		     . pack('N', $messageId)        // identifier (4 bytes)
-		     . pack('N', time() + 86400)    // expire after 1 day (4 bytes)
-		     . pack('n', 32)                // token length (2 bytes)
-		     . pack('H*', $deviceToken)     // device token (32 bytes)
-		     . pack('n', strlen($payload))  // payload length (2 bytes)
-		     . $payload;                    // the JSON payload
-		*/
-
-		$result = @fwrite($this->fp, $msg, strlen($msg));
-
-		if (!$result)
-		{
-			writeToLog('Message not delivered');
-			return FALSE;
-		}
-
-		writeToLog('Message successfully delivered');
-		return TRUE;
+		writeToLog("Sending message $messageId to APNS device token: $deviceToken");
+		return $this->sendApnsRequest($messageId, $deviceToken, $payloadJson);
 	}
 
 		function sendGoogleCloudMessage( $data, $ids )
