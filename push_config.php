@@ -6,19 +6,20 @@ $config = array(
 	// These are the settings for development mode
 	'development' => array(
 
-		// The APNS server that we will use
+		// NEW The APNS server that we will use
+		'url' => 'https://api.sandbox.push.apple.com/3/device/',
+		'authKey' => 'AuthKey_xxxxxxxxxx.p8', // your .p8 file PROD or DEV, both work with the same JWT and APNs endpoint
+		'keyId' => 'xxxxxxxxxx', // your Key ID from Apple Developer account
+		'teamId' => 'xxxxxxxxxx', // your Team ID from Apple Developer account
+		'bundleId' => 'com.xxxxx.WhereRU',
+		// OLD The APNS server that we will use
 		'server' => 'gateway.push.apple.com:2195',
 
-		// The SSL certificate that allows us to connect to the APNS servers
+		// OLD The SSL certificate that allows us to connect to the APNS servers
 		'certificate' => 'ck.pem',
 		'passphrase' => 'whereru',
 
 		// Configuration of the MySQL database
-		// for local testing use
-			// 'host'     => 'localhost',
-			// 'dbname'   => 'pushchat',
-			// 'username' => 'pushchat',
-			// 'password' => 'd]682\#%yI1nb3',
 		// for Bluehost use
 			// 'host'     => 'localhost',
 			// 'dbname'   => 'altcoinf_pushwhereru',
@@ -26,9 +27,9 @@ $config = array(
 			// 'password' => 'd]682\#%yI1nb3',
 		'db' => array(
 			'host'     => 'localhost',
-			'dbname'   => 'altcoinf_pushwhereruprod',
-			'username' => 'altcoinf_pushw',
-			'password' => 'd]682\#%yI1nb3',
+			'dbname'   => 'pushchat',
+			'username' => 'root',
+			'password' => 'xxxxxxxxx',
 			),
 
 		// Name and path of our log file
@@ -38,19 +39,25 @@ $config = array(
 	// These are the settings for production mode
 	'production' => array(
 
-		// The APNS server that we will use
-		'server' => 'gateway.push.apple.com:2195',
+		// NEW The APNS server that we will use
+		'url' => 'https://api.push.apple.com/3/device/',
+		'authKey' => 'AuthKey_xxxxxxxxxx.p8', // your .p8 file PROD or DEV, both work with the same JWT and APNs endpoint
+		'keyId' => 'xxxxxxxxxx', // your Key ID from Apple Developer account
+		'teamId' => 'xxxxxxxxxx', // your Team ID from Apple Developer account
+		'bundleId' => 'com.xxxxx.WhereRU',
 
-		// The SSL certificate that allows us to connect to the APNS servers
+		// OLD The APNS server that we will use
+		'server' => 'gateway.push.apple.com:2195',
+		// OLD The SSL certificate that allows us to connect to the APNS servers
 		'certificate' => 'ck.pem',
 		'passphrase' => 'whereru',
 
 		// Configuration of the MySQL database
 		'db' => array(
 			'host'     => 'localhost',
-			'dbname'   => 'altcoinf_pushwhereruprod',
-			'username' => 'altcoinf_pushw',
-			'password' => 'd]682\#%yI1nb3',
+			'dbname'   => 'pushchat',
+			'username' => 'root',
+			'password' => 'xxxxxxxxx',
 			),
 
 		// Name and path of our log file

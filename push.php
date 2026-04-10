@@ -1,6 +1,7 @@
 <?php
 
 // WARNING 
+// APR 2026 -- iOS update for this is complete and working, but Android support is still in progress. The current code for Android push notifications is just a placeholder and needs to be properly implemented. We need to switch to using Firebase Cloud Messaging (FCM) for Android push notifications, which will require changes to the database schema, the push.php script, and the Android app. The current implementation just checks if the device token is 64 characters long (which is the length of an iOS device token) and if not, it assumes it's an Android device and sends a push notification using FCM. This is not a robust solution and we need to properly identify Android devices and handle their push notifications accordingly.
 // MAR 2026 -- This whole thing is obsolete and must be replaced with a new push notification system that can handle both iOS and Android devices. The current system is based on an old tutorial and only supports iOS devices. It also uses the old binary interface to APNS, which is no longer recommended by Apple. We need to switch to the new HTTP/2 API for APNS and also implement support for Firebase Cloud Messaging (FCM) for Android devices. This will require a significant rewrite of the code, but it will be worth it in the long run to have a more modern and robust push notification system.
 
 
