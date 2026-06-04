@@ -23,6 +23,9 @@
 // APNS), this script exits. You should probably have some type of watchdog
 // that restarts the script or at least notifies you when it quits. If this
 // script isn't running, no push notifications will be delivered!
+// to run this script:
+// php push.php production &
+// php push.php development &
 
 try
 {
@@ -30,12 +33,12 @@ try
 
 	ini_set('display_errors', 'off');
 
-//	if ($argc != 2 || ($argv[1] != 'development' && $argv[1] != 'production'))
-//		exit("Usage: php push.php development|production -- error args:[0]".$argv[0].", [1]" .$argv[1].", [2]" .$argv[2]."" . PHP_EOL);
+	if ($argc != 2 || ($argv[1] != 'development' && $argv[1] != 'production'))
+		exit("Usage: php push.php development|production -- error args:[0]".$argv[0].", [1]" .$argv[1].", [2]" .$argv[2]."" . PHP_EOL);
 
-//	$mode = $argv[1];
-	$mode = 'development';
-	echo "mode is development";
+	$mode = $argv[1];
+	// $mode = 'development';
+	echo "mode is " . $mode . PHP_EOL;
 	$config = $config[$mode];
 
 	writeToLog("Push script started ($mode mode)");
@@ -292,7 +295,7 @@ class APNS_Push
 
 		if ($httpCode === 200)
 		{
-			writeToLog("Message $messageId successfully delivered to APNS");
+			writeToLog("Message $messageId successfully delivered to APNS: $url");
 			return true;
 		}
 
