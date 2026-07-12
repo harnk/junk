@@ -11,11 +11,13 @@
 //
 // Usage: php push.php development &
 //    or: php push.php production &
+//    or: php push.php auto &
 //
 // The & will detach the script from the shell and run it in the background.
 //
-// The "development" or "production" parameter determines which APNS server
-// the script will connect to. You can configure this in "push_config.php".
+// The mode determines which APNS server the script will use first. In
+// development and auto modes, the script will try the sandbox endpoint first
+// and then fall back to the production endpoint if delivery fails.
 // Note: In development mode, the app should be compiled with the development
 // provisioning profile and it should have a development-mode device token.
 //
@@ -33,17 +35,25 @@ try
 
 	ini_set('display_errors', 'off');
 
-	if ($argc != 2 || ($argv[1] != 'development' && $argv[1] != 'production'))
-		exit("Usage: php push.php development|production -- error args:[0]".$argv[0].", [1]" .$argv[1].", [2]" .$argv[2]."" . PHP_EOL);
+	if ($argc != 2 || !in_array($argv[1], array('development', 'production', 'auto'), true))
+		exit("Usage: php push.php development|production|auto -- error args:[0]".$argv[0].", [1]" .$argv[1].", [2]" .$argv[2]."" . PHP_EOL);
 
 	$mode = $argv[1];
 	// $mode = 'development';
 	echo "mode is " . $mode . PHP_EOL;
-	$config = $config[$mode];
 
+	if ($mode === 'production') {
+		$primaryConfig = $config['production'];
+		$fallbackConfig = null;
+	} else {
+		$primaryConfig = $config['development'];
+		$fallbackConfig = $config['production'];
+	}
+
+	$config = $primaryConfig;
 	writeToLog("Push script started ($mode mode)");
 
-	$obj = new APNS_Push($config);
+	$obj = new APNS_Push($primaryConfig, $fallbackConfig);
 	$obj->start();
 }
 catch (Exception $e)
@@ -78,11 +88,12 @@ class APNS_Push
 	private $keyId;
 	private $teamId;
 	private $bundleId;
+	private $fallbackConfig;
 	private $pdo;
 	private $jwt;
 	private $jwtIssuedAt = 0;
 
-	function __construct($config)
+	function __construct($config, $fallbackConfig = null)
 	{
 		// APNS HTTP/2 settings read from the configuration file.
 		$this->url = rtrim($config['url'], '/');
@@ -90,9 +101,12 @@ class APNS_Push
 		$this->keyId = $config['keyId'];
 		$this->teamId = $config['teamId'];
 		$this->bundleId = $config['bundleId'];
+		$this->fallbackConfig = $fallbackConfig;
 
-		if (!file_exists($this->authKey))
+		if (!file_exists($this->authKey)) {
+			echo "ERROR: APNS auth key not found: $this->authKey" . PHP_EOL;
 			exit('APNS auth key not found: ' . $this->authKey . PHP_EOL);
+		}
 
 		// Create JWT for APNS authentication
 		$header = ['alg' => 'ES256', 'kid' => $this->keyId];
@@ -120,6 +134,7 @@ class APNS_Push
 
 		// We want the database to handle all strings as UTF-8.
 		$this->pdo->query('SET NAMES utf8');
+		writeToLog('Database connection established successfully');
 	}
 
 	// This is the main loop for this script. It polls the database for new
@@ -142,6 +157,10 @@ class APNS_Push
 			$stmt = $this->pdo->prepare('SELECT * FROM push_queue WHERE time_sent IS NULL LIMIT 20');
 			$stmt->execute();
 			$messages = $stmt->fetchAll(PDO::FETCH_OBJ);
+			$messageCount = count($messages);
+			if ($messageCount > 0) {
+				writeToLog("Found $messageCount messages in push_queue");
+			}
 
 			foreach ($messages as $message)
 			{
@@ -166,12 +185,14 @@ class APNS_Push
 	function connectToAPNS()
 	{
 		if (!function_exists('curl_init')) {
+			echo "ERROR: cURL extension not found" . PHP_EOL;
 			writeToLog('cURL extension is required for APNS HTTP/2');
 			return FALSE;
 		}
 
 		$curlVersion = curl_version();
 		if (defined('CURL_VERSION_HTTP2') && !($curlVersion['features'] & CURL_VERSION_HTTP2)) {
+			echo "ERROR: cURL does not support HTTP/2" . PHP_EOL;
 			writeToLog('cURL must be built with HTTP/2 support for APNS');
 			return FALSE;
 		}
@@ -179,6 +200,7 @@ class APNS_Push
 		try {
 			$this->getApnsJwt();
 		} catch (Exception $e) {
+			echo "ERROR: APNS JWT generation failed: " . $e->getMessage() . PHP_EOL;
 			writeToLog('APNS JWT generation failed: ' . $e->getMessage());
 			return FALSE;
 		}
@@ -230,11 +252,15 @@ class APNS_Push
 
 		$privateKey = file_get_contents($this->authKey);
 		$pkResource = openssl_pkey_get_private($privateKey);
-		if (!$pkResource)
+		if (!$pkResource) {
+			echo "ERROR: Unable to load APNS auth key from file" . PHP_EOL;
 			throw new Exception('Unable to load APNS auth key');
+		}
 
-		if (!openssl_sign($data, $signature, $pkResource, OPENSSL_ALGO_SHA256))
+		if (!openssl_sign($data, $signature, $pkResource, OPENSSL_ALGO_SHA256)) {
+			echo "ERROR: Unable to sign APNS JWT" . PHP_EOL;
 			throw new Exception('Unable to sign APNS JWT');
+		}
 
 		$this->jwt = $data . '.' . $this->base64UrlEncode($signature);
 		$this->jwtIssuedAt = time();
@@ -247,6 +273,7 @@ class APNS_Push
 		$json = json_decode($payload, true);
 		if (!is_array($json))
 		{
+			echo "ERROR: Message $messageId has invalid payload: $payload" . PHP_EOL;
 			writeToLog("Message $messageId has invalid payload");
 			return false;
 		}
@@ -262,13 +289,21 @@ class APNS_Push
 		return json_encode($json, JSON_UNESCAPED_UNICODE);
 	}
 
-	private function sendApnsRequest($messageId, $deviceToken, $payloadJson)
+	private function sendApnsRequest($messageId, $deviceToken, $payloadJson, $config = null, $endpointName = 'APNS')
 	{
 		$jwt = $this->getApnsJwt();
-		$url = $this->url . '/' . $deviceToken;
+		$url = $this->url;
+		$bundleId = $this->bundleId;
+
+		if ($config !== null) {
+			$url = rtrim($config['url'], '/');
+			$bundleId = isset($config['bundleId']) ? $config['bundleId'] : $this->bundleId;
+		}
+
+		$url = $url . '/' . $deviceToken;
 
 		$headers = [
-			'apns-topic: ' . $this->bundleId,
+			'apns-topic: ' . $bundleId,
 			'apns-push-type: alert',
 			'apns-priority: 10',
 			'authorization: bearer ' . $jwt,
@@ -289,17 +324,30 @@ class APNS_Push
 
 		if ($curlErr)
 		{
-			writeToLog("APNS curl error for message $messageId: $curlErr");
+			writeToLog("$endpointName curl error for message $messageId: $curlErr");
 			return false;
 		}
 
 		if ($httpCode === 200)
 		{
-			writeToLog("Message $messageId successfully delivered to APNS: $url");
+			writeToLog("Message $messageId successfully delivered to $endpointName: $url");
 			return true;
 		}
 
-		writeToLog("APNS error for message $messageId: HTTP $httpCode response: $response");
+		// Parse the error response
+		$errorData = json_decode($response, true);
+		$reason = isset($errorData['reason']) ? $errorData['reason'] : 'unknown';
+		
+		writeToLog("$endpointName error for message $messageId: HTTP $httpCode, reason: $reason, response: $response");
+		
+		// For BadDeviceToken or Unregistered, don't reconnect - the token is invalid
+		if ($reason === 'BadDeviceToken' || $reason === 'Unregistered') {
+			writeToLog("$reason for message $messageId, device_token: $deviceToken - token is invalid/expired");
+			// Mark as sent to remove from queue even though it failed
+			// The app should refresh the token when it's opened again
+			return true;
+		}
+		
 		return false;
 	}
 
@@ -331,11 +379,18 @@ class APNS_Push
 		}
 
 		$payloadJson = $this->normalizeApnsPayload($messageId, $payload);
-		if ($payloadJson === false)
+		if ($payloadJson === false) {
 			return TRUE;
+		}
 
 		writeToLog("Sending message $messageId to APNS device token: $deviceToken");
-		return $this->sendApnsRequest($messageId, $deviceToken, $payloadJson);
+		$result = $this->sendApnsRequest($messageId, $deviceToken, $payloadJson);
+		if ($result === true || !$this->fallbackConfig) {
+			return $result;
+		}
+
+		writeToLog("Primary APNS delivery failed for message $messageId, retrying with production endpoint");
+		return $this->sendApnsRequest($messageId, $deviceToken, $payloadJson, $this->fallbackConfig, 'APNS fallback');
 	}
 
 		function sendGoogleCloudMessage( $data, $ids )
@@ -374,12 +429,13 @@ class APNS_Push
 	    $result = curl_exec( $ch );
 	    // Error handling
 	    if ( curl_errno( $ch ) ) {
-	        echo 'GCM error: ' . curl_error( $ch );
+	        echo 'GCM error: ' . curl_error( $ch ) . PHP_EOL;
+	        writeToLog('GCM error: ' . curl_error( $ch ));
+	    } else {
+	        writeToLog("GCM request completed: $result");
 	    }
 	    // Close curl handle
 	    curl_close( $ch );
-	    // Debug GCM response       
-	    echo $result;
 	}
 
 
